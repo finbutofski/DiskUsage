@@ -3,9 +3,9 @@ import time
 from pathlib import Path
 
 
-def get_tree(root_path):
+def get_tree(root_path, progress_callback=None):
     root_path = os.path.abspath(root_path)
-    base_depth = root_path.count(os.sep)
+    is_nt = os.name == 'nt'
 
     tree = {
         "name": os.path.basename(root_path) or root_path,
@@ -14,27 +14,38 @@ def get_tree(root_path):
         "count": 0,
         "depth": 0,
         "mtime": os.path.getmtime(root_path),
-        "owner": Path(root_path).owner() if os.name != 'nt' else "User",
+        "owner": "User" if is_nt else Path(root_path).owner(),
         "children": {}
     }
 
     nodes = {root_path: tree}
+    last_ui_update = 0
 
     for current_dir, dirs, files in os.walk(root_path):
         if current_dir not in nodes:
             continue
 
         current_node = nodes[current_dir]
-        # Вычисляем текущую глубину относительно корня
-        current_depth = current_dir.count(os.sep) - base_depth
+        current_depth = current_node["depth"]
+
+        if progress_callback:
+            current_time = time.time()
+            if current_time - last_ui_update > 0.1:
+                progress_callback(current_dir)
+                last_ui_update = current_time
+
+        dir_files_size = 0
+        dir_files_count = 0
 
         for f in files:
             file_path = os.path.join(current_dir, f)
             try:
-                if os.path.islink(file_path): continue
+                if os.path.islink(file_path):
+                    continue
 
                 stat = os.stat(file_path)
                 f_size = stat.st_size
+                ext = os.path.splitext(f)[1].lower()
 
                 current_node["children"][f] = {
                     "name": f,
@@ -42,19 +53,24 @@ def get_tree(root_path):
                     "size": f_size,
                     "depth": current_depth + 1,
                     "mtime": stat.st_mtime,
-                    "owner": Path(file_path).owner() if os.name != 'nt' else "User",
-                    "ext": Path(f).suffix.lower()
+                    "owner": "User" if is_nt else Path(file_path).owner(),
+                    "ext": ext
                 }
 
-                temp_path = current_dir
-                while temp_path in nodes:
-                    nodes[temp_path]["size"] += f_size
-                    nodes[temp_path]["count"] += 1
-                    if temp_path == root_path: break
-                    temp_path = os.path.dirname(temp_path)
+                dir_files_size += f_size
+                dir_files_count += 1
 
             except OSError:
                 continue
+
+        if dir_files_size > 0:
+            temp_path = current_dir
+            while temp_path in nodes:
+                nodes[temp_path]["size"] += dir_files_size
+                nodes[temp_path]["count"] += dir_files_count
+                if temp_path == root_path:
+                    break
+                temp_path = os.path.dirname(temp_path)
 
         for d in dirs:
             dir_path = os.path.join(current_dir, d)
@@ -67,7 +83,7 @@ def get_tree(root_path):
                     "count": 0,
                     "depth": current_depth + 1,
                     "mtime": stat.st_mtime,
-                    "owner": Path(dir_path).owner() if os.name != 'nt' else "User",
+                    "owner": "User" if is_nt else Path(dir_path).owner(),
                     "children": {}
                 }
                 current_node["children"][d] = new_dir_node
@@ -106,3 +122,14 @@ def get_files_sorted_by_extension(node):
             result[el['ext']] = []
         result[el['ext']].append(el)
     return dict(sorted(result.items(), key=lambda item: -len(item[1])))
+
+
+def get_files_sorted_by_size(node):
+    if 'children' in node and node['children']:
+        node['children'] = dict(sorted(
+            node['children'].items(),
+            key=lambda item: item[1]['size'],
+            reverse=True
+        ))
+    return node
+
