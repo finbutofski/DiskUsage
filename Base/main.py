@@ -1,7 +1,7 @@
 ﻿from Base.kerl import get_tree
 from Base.kerl import get_files_sorted_by_extension
 
-tree = get_tree("D:\\")
+tree = get_tree("C:\\")
 files_by_extension = get_files_sorted_by_extension(tree)
 
 for repos in tree['children'].values():
