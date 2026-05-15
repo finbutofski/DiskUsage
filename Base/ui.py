@@ -20,18 +20,10 @@ class ScanThread(QThread):
         self.root_path = root_path
 
     def run(self):
-        # Передаем в оригинальный get_tree ссылку на наш сигнал через lambda.
-        # Когда внутри os.walk сработает progress_callback(current_dir),
-        # этот вызов превратится в self.progress.emit(current_dir, 0)
         tree = get_tree(
             self.root_path,
             progress_callback=lambda path: self.progress.emit(path, 0)
         )
-
-        # Сортируем дерево функцией из kerl.py
-        # tree = get_files_sorted_by_size(tree)
-
-        # Отправляем результат в GUI
         self.finished.emit(tree)
 
 
@@ -106,8 +98,6 @@ class DiskUsageApp(QMainWindow):
     def populate_tree_iterative(self, root_data):
         """Заполнение дерева БЕЗ рекурсии и без сортировки"""
         root_item = self.model.invisibleRootItem()
-
-        # Стек хранит кортежи: (родительский_элемент_UI, данные_ноды)
         stack = [(root_item, root_data)]
 
         while stack:
@@ -118,19 +108,10 @@ class DiskUsageApp(QMainWindow):
 
             node_type = node_data.get("type", "directory")
             type_item = QStandardItem("Папка" if node_type == "directory" else "Файл")
-
-            # Извлекаем владельца из данных сканирования
             owner = node_data.get("owner", "User")
             owner_item = QStandardItem(owner)
-
-            # Добавляем строку в интерфейс
             parent_item.appendRow([name_item, size_item, type_item, owner_item])
-
-            # ТАК КАК children — ЭТО СЛОВАРЬ:
             if "children" in node_data and node_data["children"]:
-                # Берем просто список значений словаря (.values()) БЕЗ reversed
-                # Из-за специфики стека (LIFO), чтобы файлы отображались сверху вниз
-                # в естественном порядке, их значения нужно закидывать в стек развернутыми.
                 children_list = list(node_data["children"].values())
 
                 for child in reversed(children_list):
