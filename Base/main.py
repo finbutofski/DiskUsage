@@ -1,8 +1,8 @@
 ﻿from Base.kerl import get_tree
-from Base.kerl import get_files_sorted_by_extension
+from Base.kerl import get_files_sorted_by_size
 
 tree = get_tree("C:\\")
-files_by_extension = get_files_sorted_by_extension(tree)
+files_by_extension = get_files_sorted_by_size(tree)
 
 for repos in tree['children'].values():
     if repos['type'] == 'directory':
@@ -13,6 +13,6 @@ for repos in tree['children'].values():
 # print("-" * 65)
 print("\n\n")
 
-for key, value in files_by_extension.items(): # Берем только первые 15 элементов
-    # Для удобства переведем в Мегабайты
-    print(f"{key:<10} | filescount:{len(value)}")
+# for key, value in files_by_extension.items(): # Берем только первые 15 элементов
+#     # Для удобства переведем в Мегабайты
+#     print(f"{key:<10} | filescount:{len(value)}")
