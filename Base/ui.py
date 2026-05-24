@@ -1,33 +1,47 @@
 ﻿import os
 import sys
 import time
-from Base.kerl import get_tree
+from Base.kerl import get_tree_parallel
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTreeView, QProgressBar, QPushButton,
                              QFileDialog, QLabel, QHeaderView)
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QThreadPool
 from pathlib import Path
 
 
-# 1. Поток сканирования
-class ScanThread(QThread):
-    progress = pyqtSignal(str, int)
+# Специальный объект для безопасной передачи сигналов в Qt
+class WorkerSignals(QObject):
+    progress = pyqtSignal(str)
     finished = pyqtSignal(dict)
 
+
+# Воркер, который будет выполнять сканирование папки
+class ScanWorker(QRunnable):
     def __init__(self, root_path):
         super().__init__()
         self.root_path = root_path
+        self.signals = WorkerSignals()
 
     def run(self):
-        tree = get_tree(
-            self.root_path,
-            progress_callback=lambda path: self.progress.emit(path, 0)
-        )
-        self.finished.emit(tree)
+        try:
+            # Вызываем многопоточный метод сканирования
+            tree = get_tree_parallel(
+                self.root_path,
+                progress_callback=lambda path: self.signals.progress.emit(path)
+            )
+            self.signals.finished.emit(tree)
+        except Exception as e:
+            # Защита от падения: если что-то пошло не так, вернем пустую ноду
+            self.signals.finished.emit({
+                "name": os.path.basename(self.root_path) or self.root_path,
+                "type": "directory",
+                "size": 0,
+                "children": {},
+                "owner": f"Error: {str(e)}"
+            })
 
 
-# 2. Главное окно
 class DiskUsageApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -64,12 +78,14 @@ class DiskUsageApp(QMainWindow):
             self.progress_bar.setRange(0, 0)
             self.btn_scan.setEnabled(False)
 
-            self.scan_thread = ScanThread(folder)
-            self.scan_thread.progress.connect(self.update_status)
-            self.scan_thread.finished.connect(self.display_data)
-            self.scan_thread.start()
+            # Вместо QThread используем глобальный пул потоков Qt
+            self.worker = ScanWorker(folder)
+            self.worker.signals.progress.connect(self.update_status)
+            self.worker.signals.finished.connect(self.display_data)
 
-    def update_status(self, path, size):
+            QThreadPool.globalInstance().start(self.worker)
+
+    def update_status(self, path):
         if len(path) > 60:
             path = "..." + path[-57:]
         self.lbl_status.setText(f"Сканирую: {path}")
@@ -88,15 +104,11 @@ class DiskUsageApp(QMainWindow):
         self.btn_scan.setEnabled(True)
 
         self.tree_view.setUpdatesEnabled(False)
-
-        # Вызываем новый безопасный метод заполнения
         self.populate_tree_iterative(data)
         self.tree_view.expandToDepth(0)
-
         self.tree_view.setUpdatesEnabled(True)
 
     def populate_tree_iterative(self, root_data):
-        """Заполнение дерева БЕЗ рекурсии и без сортировки"""
         root_item = self.model.invisibleRootItem()
         stack = [(root_item, root_data)]
 
@@ -111,9 +123,9 @@ class DiskUsageApp(QMainWindow):
             owner = node_data.get("owner", "User")
             owner_item = QStandardItem(owner)
             parent_item.appendRow([name_item, size_item, type_item, owner_item])
+
             if "children" in node_data and node_data["children"]:
                 children_list = list(node_data["children"].values())
-
                 for child in reversed(children_list):
                     stack.append((name_item, child))
 
