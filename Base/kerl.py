@@ -2,6 +2,12 @@
 import time
 from pathlib import Path
 
+def count_items(root_path):
+    """Быстрый подсчет общего количества файлов и папок для прогресс-бара"""
+    total = 0
+    for _, dirs, files in os.walk(root_path):
+        total += len(dirs) + len(files)
+    return total
 
 def get_tree(root_path, progress_callback=None):
     root_path = os.path.abspath(root_path)
@@ -20,6 +26,7 @@ def get_tree(root_path, progress_callback=None):
 
     nodes = {root_path: tree}
     last_ui_update = 0
+    total_scanned = 0  # Текущее количество обработанных элементов
 
     for current_dir, dirs, files in os.walk(root_path):
         if current_dir not in nodes:
@@ -28,17 +35,20 @@ def get_tree(root_path, progress_callback=None):
         current_node = nodes[current_dir]
         current_depth = current_node["depth"]
 
-        if progress_callback:
-            current_time = time.time()
-            if current_time - last_ui_update > 0.1:
-                progress_callback(current_dir)
-                last_ui_update = current_time
-
         dir_files_size = 0
         dir_files_count = 0
 
         for f in files:
             file_path = os.path.join(current_dir, f)
+            total_scanned += 1
+
+            # Отправляем прогресс в UI
+            if progress_callback:
+                current_time = time.time()
+                if current_time - last_ui_update > 0.05:  # Обновление каждые 50мс для плавности
+                    progress_callback(current_dir, total_scanned)
+                    last_ui_update = current_time
+
             try:
                 if os.path.islink(file_path):
                     continue
@@ -74,6 +84,7 @@ def get_tree(root_path, progress_callback=None):
 
         for d in dirs:
             dir_path = os.path.join(current_dir, d)
+            total_scanned += 1
             try:
                 stat = os.stat(dir_path)
                 new_dir_node = {
@@ -93,14 +104,6 @@ def get_tree(root_path, progress_callback=None):
 
     return tree
 
-def _calculate_ratios(node, total_size):
-    """Рекурсивная функция для расчета процентов"""
-    node["ratio"] = (node["size"] / total_size) * 100
-    if node["type"] == "directory":
-        for child in node["children"].values():
-            _calculate_ratios(child, total_size)
-
-
 def extract_files(all_files, current_node):
     if current_node['type'] == 'file':
         all_files.append({
@@ -112,7 +115,6 @@ def extract_files(all_files, current_node):
         for child in current_node['children'].values():
             extract_files(all_files, child)
 
-
 def get_files_sorted_by_extension(node):
     all_files = []
     result = {}
@@ -122,14 +124,3 @@ def get_files_sorted_by_extension(node):
             result[el['ext']] = []
         result[el['ext']].append(el)
     return dict(sorted(result.items(), key=lambda item: -len(item[1])))
-
-
-def get_files_sorted_by_size(node):
-    if 'children' in node and node['children']:
-        node['children'] = dict(sorted(
-            node['children'].items(),
-            key=lambda item: item[1]['size'],
-            reverse=True
-        ))
-    return node
-
