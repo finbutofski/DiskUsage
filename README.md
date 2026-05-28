@@ -8,8 +8,8 @@
 
 ## Контрибьюторы
 
-Антон Страбыкин ФТ-103 [GitHub](https://github.com/finbutofski) [Telegram](https://t.me/t0shInI)
-Григорий Борзых ФТ-103 [GitHub](https://github.com/dispring) [Telegram](https://t.me/dispring)
+- Антон Страбыкин ФТ-103 [GitHub](https://github.com/finbutofski) [Telegram](https://t.me/t0shInI)
+- Григорий Борзых ФТ-103 [GitHub](https://github.com/dispring) [Telegram](https://t.me/dispring)
 
 ## Возможности
 
