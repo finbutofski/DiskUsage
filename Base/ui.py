@@ -3,7 +3,7 @@ import sys
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTreeView, QProgressBar, QPushButton,
                              QFileDialog, QLabel, QHeaderView, QTabWidget, QTableWidget, QTableWidgetItem)
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QPainter, QColor, QFont
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QPainter, QColor, QFont, QPalette
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QRect
 
 # Импорт функций из kerl.py
@@ -351,6 +351,26 @@ class DiskUsageApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    dark_palette = app.palette()
+    dark_palette.setColor(QPalette.ColorRole.Window,          QColor(30, 30, 30))
+    dark_palette.setColor(QPalette.ColorRole.WindowText,      QColor(220, 220, 220))
+    dark_palette.setColor(QPalette.ColorRole.Base,            QColor(22, 22, 22))
+    dark_palette.setColor(QPalette.ColorRole.AlternateBase,   QColor(38, 38, 38))
+    dark_palette.setColor(QPalette.ColorRole.ToolTipBase,     QColor(220, 220, 220))
+    dark_palette.setColor(QPalette.ColorRole.ToolTipText,     QColor(220, 220, 220))
+    dark_palette.setColor(QPalette.ColorRole.Text,            QColor(220, 220, 220))
+    dark_palette.setColor(QPalette.ColorRole.Button,          QColor(45, 45, 45))
+    dark_palette.setColor(QPalette.ColorRole.ButtonText,      QColor(220, 220, 220))
+    dark_palette.setColor(QPalette.ColorRole.BrightText,      QColor(255, 255, 255))
+    dark_palette.setColor(QPalette.ColorRole.Link,            QColor(74, 144, 217))
+    dark_palette.setColor(QPalette.ColorRole.Highlight,       QColor(74, 144, 217))
+    dark_palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       QColor(100, 100, 100))
+    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(100, 100, 100))
+    app.setPalette(dark_palette)
+
     window = DiskUsageApp()
     window.show()
     sys.exit(app.exec())
