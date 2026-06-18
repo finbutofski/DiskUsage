@@ -1,10 +1,6 @@
 ﻿import os
 import time
 from pathlib import Path
-import concurrent.futures          # Это у вас уже, скорее всего, есть
-import concurrent                  # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
-from concurrent.futures import ThreadPoolExecutor
-import threading
 from ads_support import *
 
 
@@ -20,6 +16,7 @@ def get_tree(root_path, progress_callback=None):
     root_path = os.path.abspath(root_path)
     is_nt = os.name == 'nt'
 
+    # Корень дерева
     tree = {
         "name": os.path.basename(root_path) or root_path,
         "type": "directory",
@@ -31,137 +28,107 @@ def get_tree(root_path, progress_callback=None):
         "children": {}
     }
 
+    # Реестр нод для быстрого доступа по путям
     nodes = {root_path: tree}
-    tree_lock = threading.Lock()
+    last_ui_update = 0
+    total_scanned = 0
 
-    ui_lock = threading.Lock()
-    last_ui_update = [0.0]
-    total_scanned = [0]
+    # Классический os.walk гарантирует последовательный обход сверху вниз
+    for current_dir, dirs, files in os.walk(root_path):
+        if current_dir not in nodes:
+            continue
 
-    def scan_directory(current_dir):
-        """Функция для обработки ОДНОЙ директории. Будет выполняться в пуле потоков."""
-        try:
-            # os.scandir эффективнее, чем os.listdir, так как сразу возвращает объекты с метаданными
-            with os.scandir(current_dir) as entries:
-                entries_list = list(entries)
-        except OSError:
-            return []  # Нет доступа к папке
-
-        local_files = []
-        local_dirs = []
-
-        # Сначала быстро разделяем объекты
-        for entry in entries_list:
-            try:
-                if entry.is_symlink():
-                    continue
-                if entry.is_file():
-                    local_files.append(entry)
-                elif entry.is_dir():
-                    local_dirs.append(entry)
-            except OSError:
-                continue
-
-        local_scanned_count = len(local_files) + len(local_dirs)
-        if progress_callback:
-            with ui_lock:
-                total_scanned[0] += local_scanned_count
-                current_time = time.time()
-                if current_time - last_ui_update[0] > 0.05:
-                    progress_callback(current_dir, total_scanned[0])
-                    last_ui_update[0] = current_time
-
-        # Получаем текущий узел из общего дерева
-        with tree_lock:
-            current_node = nodes.get(current_dir)
-        if not current_node:
-            return []
-
+        current_node = nodes[current_dir]
         current_depth = current_node["depth"]
+
         dir_files_size = 0
         dir_files_count = 0
 
-        # 1. Обрабатываем файлы в текущей директории
-        for entry in local_files:
+        # 1. Обрабатываем файлы в текущей папке
+        for f in files:
+            file_path = os.path.join(current_dir, f)
+            total_scanned += 1
+
+            # Плавное обновление UI (каждые 50 мс)
+            if progress_callback:
+                current_time = time.time()
+                if current_time - last_ui_update > 0.05:
+                    progress_callback(current_dir, total_scanned)
+                    last_ui_update = current_time
+
             try:
-                stat = entry.stat()
+                if os.path.islink(file_path):
+                    continue
+
+                stat = os.stat(file_path)
                 f_size = stat.st_size
-                ext = os.path.splitext(entry.name)[1].lower()
+                ext = os.path.splitext(f)[1].lower()
 
-                # Наша интеграция ADS (выполняется параллельно!)
-                ads_size = get_ads_size(entry.path)
+                # --- ЧЕСТНЫЙ ПОДСЧЕТ ADS ---
+                ads_size = get_ads_size(file_path)
                 full_size = f_size + ads_size
+                # ---------------------------
 
-                with tree_lock:
-                    current_node["children"][entry.name] = {
-                        "name": entry.name,
-                        "type": "file",
-                        "size": full_size,
-                        "ads_size": ads_size,
-                        "depth": current_depth + 1,
-                        "mtime": stat.st_mtime,
-                        "owner": "User" if is_nt else Path(entry.path).owner(),
-                        "ext": ext
-                    }
+                current_node["children"][f] = {
+                    "name": f,
+                    "type": "file",
+                    "size": full_size,
+                    "ads_size": ads_size,
+                    "depth": current_depth + 1,
+                    "mtime": stat.st_mtime,
+                    "owner": "User" if is_nt else Path(file_path).owner(),
+                    "ext": ext
+                }
+
                 dir_files_size += full_size
                 dir_files_count += 1
+
             except OSError:
                 continue
 
-        # 2. Создаем «заглушки» для поддиректорий и собираем пути для дальнейшего сканирования
-        next_dirs_to_scan = []
-        for entry in local_dirs:
+        # 2. Обрабатываем папки в текущей директории (создаем заглушки)
+        for d in dirs:
+            dir_path = os.path.join(current_dir, d)
+            total_scanned += 1
+
             try:
-                stat = entry.stat()
+                stat = os.stat(dir_path)
                 new_dir_node = {
-                    "name": entry.name,
+                    "name": d,
                     "type": "directory",
                     "size": 0,
                     "count": 0,
                     "depth": current_depth + 1,
                     "mtime": stat.st_mtime,
-                    "owner": "User" if is_nt else Path(entry.path).owner(),
+                    "owner": "User" if is_nt else Path(dir_path).owner(),
                     "children": {}
                 }
-                with tree_lock:
-                    current_node["children"][entry.name] = new_dir_node
-                    nodes[entry.path] = new_dir_node
-
-                next_dirs_to_scan.append(entry.path)
+                current_node["children"][d] = new_dir_node
+                nodes[dir_path] = new_dir_node
             except OSError:
                 continue
 
-        if dir_files_size > 0:
-            with tree_lock:
-                temp_path = current_dir
-                while temp_path in nodes:
-                    nodes[temp_path]["size"] += dir_files_size
-                    nodes[temp_path]["count"] += dir_files_count
-                    if temp_path == root_path:
-                        break
-                    temp_path = os.path.dirname(temp_path)
+    # --- ФИНАЛЬНЫЙ СБОР РАЗМЕРОВ (Снизу Вверх) ---
+    # Постобработка дерева гарантирует, что размеры всех подпапок сложатся абсолютно точно
+    def calculate_sizes_post_order(node):
+        if node["type"] == "file":
+            return node["size"], 1
 
-        return next_dirs_to_scan
+        total_size = 0
+        total_count = 0
 
-    max_workers = (os.cpu_count() or 4) * 4
+        for child in node["children"].values():
+            child_size, child_count = calculate_sizes_post_order(child)
+            total_size += child_size
+            total_count += child_count
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Очередь задач на обработку директорий. Стартуем с корня.
-        futures = {executor.submit(scan_directory, root_path)}
+        node["size"] = total_size
+        node["count"] = total_count
+        return total_size, total_count
 
-        while futures:
-            done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
-
-            for future in done:
-                futures.remove(future)
-                try:
-                    next_dirs = future.result()
-                    for d_path in next_dirs:
-                        futures.add(executor.submit(scan_directory, d_path))
-                except Exception as e:
-                    print(f"Ошибка при сканировании: {e}")
-
+    calculate_sizes_post_order(tree)
     return tree
+
 
 def extract_files(all_files, current_node):
     if current_node['type'] == 'file':
