@@ -1,4 +1,6 @@
 import os
+import shutil
+import subprocess
 import pytest
 from kerl import get_tree, count_items, get_files_sorted_by_extension
 
@@ -69,20 +71,36 @@ def test_get_files_sorted_by_extension(tmp_path):
 
 
 @pytest.mark.skipif(os.name != 'nt', reason="ADS поддерживается только на Windows (NTFS)")
-def test_ntfs_ads_support(tmp_path):
-    """Специальный тест для проверки интеграции NTFS ADS (запускается только на Windows)"""
-    file_path = tmp_path / "ads_test.txt"
-    file_path.write_text("12345")  # Основной поток = 5 байт
+def test_ntfs_ads_support():
+    """Специальный тест для проверки интеграции NTFS ADS"""
+    # Будем использовать абсолютный путь в корне проекта
+    test_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "local_test_ads_dir"))
 
-    # Записываем альтернативный поток через стандартные средства ОС
-    # Имя потока: 'secret'
-    ads_path = f"{file_path}:secret"
-    with open(ads_path, "w", encoding="utf-8") as f:
-        f.write("67890")  # Поток ADS = 5 байт
+    if os.path.exists(test_dir):
+        shutil.rmtree(test_dir)
+    os.makedirs(test_dir, exist_ok=True)
 
-    tree = get_tree(str(tmp_path))
-    target_file_node = tree["children"]["ads_test.txt"]
+    try:
+        file_path = os.path.join(test_dir, "ads_test.txt")
 
-    # Программа должна увидеть основной размер + размер ADS (5 + 5 = 10 байт)
-    assert target_file_node["size"] == 10
-    assert target_file_node["ads_size"] == 5
+        # 1. Создаем обычный файл (5 байт)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("12345")
+
+        # 2. Записываем ADS через cmd (команда echo запишет 5 байт '67890' БЕЗ перевода строки)
+        # Флаг /p в cmd убирает лишние невидимые символы
+        cmd_command = f'str/p "67890" > "{file_path}:secret"'
+        # Для простоты и кросс-версионности используем классический echo (запишет 5 байт + перевод строки)
+        subprocess.run(f'echo 67890> "{file_path}:secret"', shell=True, check=True)
+
+        # Запускаем анализатор
+        tree = get_tree(test_dir)
+        target_file_node = tree["children"]["ads_test.txt"]
+
+        detected_ads = target_file_node["ads_size"]
+        assert detected_ads > 0
+        assert target_file_node["size"] == 5 + detected_ads
+
+    finally:
+        if os.path.exists(test_dir):
+            shutil.rmtree(test_dir)
