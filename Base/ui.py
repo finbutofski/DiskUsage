@@ -347,12 +347,12 @@ class DiskUsageApp(QMainWindow):
             type_item = QStandardItem(type_str)
 
             # Подсвечиваем файлы с альтернативными потоками данных
+            # --- СТАЛО (УБРАЛИ self.) ---
             if ads_size > 0:
                 from PyQt6.QtGui import QColor
                 type_item.setForeground(QColor("teal"))
                 name_item.setForeground(QColor("teal"))
-                # Добавляем подсказку при наведении мышкой на имя файла
-                name_item.setToolTip(f"Размер скрытых потоков (ADS): {self.format_size(ads_size)}")
+                name_item.setToolTip(f"Размер скрытых потоков (ADS): {format_size(ads_size)}")
             # --- КОНЕЦ ВСТАВКИ ---
 
             owner_item = QStandardItem(node_data.get("owner", "User"))
