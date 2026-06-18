@@ -163,7 +163,23 @@ class DiskUsageApp(QMainWindow):
             size_item = NumericSortItem(self.format_size(node_data["size"]), node_data["size"])
 
             node_type = node_data.get("type", "directory")
-            type_item = QStandardItem("Папка" if node_type == "directory" else "Файл")
+
+            ads_size = node_data.get("ads_size", 0)
+            if node_type == "file":
+                type_str = "Файл (с ADS)" if ads_size > 0 else "Файл"
+            else:
+                type_str = "Папка"
+
+            type_item = QStandardItem(type_str)
+
+            # Подсвечиваем файлы с альтернативными потоками данных
+            if ads_size > 0:
+                from PyQt6.QtGui import QColor
+                type_item.setForeground(QColor("teal"))
+                name_item.setForeground(QColor("teal"))
+                # Добавляем подсказку при наведении мышкой на имя файла
+                name_item.setToolTip(f"Размер скрытых потоков (ADS): {self.format_size(ads_size)}")
+            # --- КОНЕЦ ВСТАВКИ ---
 
             owner_item = QStandardItem(node_data.get("owner", "User"))
 

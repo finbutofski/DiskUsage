@@ -1,13 +1,15 @@
 ﻿import os
 import time
 from pathlib import Path
+from ads_support import *  # Подключаем ваш файл с ctypes-функцией
+
 
 def count_items(root_path):
-    """Быстрый подсчет общего количества файлов и папок для прогресс-бара"""
     total = 0
     for _, dirs, files in os.walk(root_path):
         total += len(dirs) + len(files)
     return total
+
 
 def get_tree(root_path, progress_callback=None):
     root_path = os.path.abspath(root_path)
@@ -26,7 +28,7 @@ def get_tree(root_path, progress_callback=None):
 
     nodes = {root_path: tree}
     last_ui_update = 0
-    total_scanned = 0  # Текущее количество обработанных элементов
+    total_scanned = 0
 
     for current_dir, dirs, files in os.walk(root_path):
         if current_dir not in nodes:
@@ -42,10 +44,9 @@ def get_tree(root_path, progress_callback=None):
             file_path = os.path.join(current_dir, f)
             total_scanned += 1
 
-            # Отправляем прогресс в UI
             if progress_callback:
                 current_time = time.time()
-                if current_time - last_ui_update > 0.05:  # Обновление каждые 50мс для плавности
+                if current_time - last_ui_update > 0.05:
                     progress_callback(current_dir, total_scanned)
                     last_ui_update = current_time
 
@@ -57,17 +58,30 @@ def get_tree(root_path, progress_callback=None):
                 f_size = stat.st_size
                 ext = os.path.splitext(f)[1].lower()
 
+                # --- БЕЗОПАСНЫЙ ПОДСЧЕТ ADS ---
+                # Если системный вызов упадёт из-за прав доступа,
+                # мы всё равно сохраним основной размер файла (f_size)
+                ads_size = 0
+                try:
+                    ads_size = get_ads_size(file_path)
+                except:
+                    pass
+
+                full_size = f_size + ads_size
+                # ------------------------------
+
                 current_node["children"][f] = {
                     "name": f,
                     "type": "file",
-                    "size": f_size,
+                    "size": full_size,
+                    "ads_size": ads_size,
                     "depth": current_depth + 1,
                     "mtime": stat.st_mtime,
                     "owner": "User" if is_nt else Path(file_path).owner(),
                     "ext": ext
                 }
 
-                dir_files_size += f_size
+                dir_files_size += full_size
                 dir_files_count += 1
 
             except OSError:
@@ -104,6 +118,10 @@ def get_tree(root_path, progress_callback=None):
 
     return tree
 
+
+# Функции extract_files и get_files_sorted_by_extension остаются без изменений...
+
+
 def extract_files(all_files, current_node):
     if current_node['type'] == 'file':
         all_files.append({
@@ -114,6 +132,7 @@ def extract_files(all_files, current_node):
     elif current_node['type'] == 'directory':
         for child in current_node['children'].values():
             extract_files(all_files, child)
+
 
 def get_files_sorted_by_extension(node):
     all_files = []
