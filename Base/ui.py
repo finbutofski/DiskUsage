@@ -3,11 +3,23 @@ import sys
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTreeView, QProgressBar, QPushButton,
                              QFileDialog, QLabel, QHeaderView, QTabWidget, QTableWidget, QTableWidgetItem)
-from PyQt6.QtGui import QStandardItemModel, QStandardItem
-from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QPainter, QColor, QFont, QPalette
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QRect
 
 # Импорт функций из kerl.py
 from kerl import get_tree, get_files_sorted_by_extension, count_items
+
+
+PALETTE = ["#4A90D9", "#5BA85A", "#E87C35", "#C94F4F", "#8B6BB1",
+           "#3AADA8", "#E8C440", "#D96B8A", "#7FB3D3", "#95A5A6"]
+
+
+def format_size(size):
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} TB"
 
 
 class NumericSortItem(QStandardItem):
@@ -18,6 +30,140 @@ class NumericSortItem(QStandardItem):
 
     def __lt__(self, other):
         return self.data(Qt.ItemDataRole.UserRole) < other.data(Qt.ItemDataRole.UserRole)
+
+
+class BarChartWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.data = []
+        self.total_size = 1
+        self.setMinimumHeight(280)
+
+    def set_data(self, tree_data):
+        children = tree_data.get("children", {})
+        total = tree_data["size"] or 1
+
+        items = []
+        for node in children.values():
+            if node["size"] <= 0:
+                continue
+
+            # Собираем сегменты: подпапки + файлы корня папки как один сегмент
+            segments = []
+            files_size = 0
+
+            for child in node.get("children", {}).values():
+                if child["type"] == "directory" and child["size"] > 0:
+                    segments.append({"name": child["name"], "size": child["size"]})
+                elif child["type"] == "file":
+                    files_size += child["size"]
+
+            if files_size > 0:
+                segments.append({"name": "[файлы]", "size": files_size})
+
+            segments.sort(key=lambda x: -x["size"])
+            items.append({"name": node["name"], "size": node["size"], "segments": segments})
+
+        items.sort(key=lambda x: -x["size"])
+        self.data = items[:10]
+        self.total_size = total
+        self.update()
+
+    def paintEvent(self, event):
+        if not self.data:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        W = self.width()
+        H = self.height()
+
+        padding_top = 16
+        padding_bottom = 16
+        margin_left = 190
+        margin_right = 140
+        bar_area_w = W - margin_left - margin_right
+
+        n = len(self.data)
+        available_h = H - padding_top - padding_bottom
+        row_h = available_h / n
+        bar_h = max(18, min(40, row_h * 0.62))
+        gap = (row_h - bar_h) / 2
+
+        max_size = self.data[0]["size"]
+
+        label_font = QFont()
+        label_font.setPointSize(9)
+        painter.setFont(label_font)
+
+        seg_label_font = QFont()
+        seg_label_font.setPointSize(8)
+
+        for i, item in enumerate(self.data):
+            y = padding_top + i * row_h + gap
+            bar_w = max(2, (item["size"] / max_size) * bar_area_w)
+
+            segments = item["segments"]
+
+            if segments:
+                # Рисуем сегменты пропорционально размеру внутри bar_w
+                x_cursor = margin_left
+                for j, seg in enumerate(segments):
+                    seg_w = (seg["size"] / item["size"]) * bar_w
+                    if seg_w < 1:
+                        continue
+                    color = QColor(PALETTE[j % len(PALETTE)])
+                    painter.fillRect(int(x_cursor), int(y), int(seg_w), int(bar_h), color)
+
+                    # Подпись сегмента если достаточно места
+                    if seg_w > 48:
+                        painter.setFont(seg_label_font)
+                        painter.setPen(QColor("#ffffff"))
+                        seg_label = seg["name"] if seg_w > 80 else ""
+                        if seg_w > 80:
+                            seg_label = seg["name"] if len(seg["name"]) * 7 < seg_w - 8 else seg["name"][:int(seg_w / 7) - 2] + "…"
+                        painter.drawText(
+                            QRect(int(x_cursor + 4), int(y), int(seg_w - 8), int(bar_h)),
+                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                            seg_label
+                        )
+                        painter.setFont(label_font)
+
+                    x_cursor += seg_w
+
+                # Тонкие разделители между сегментами
+                x_div = margin_left
+                painter.setPen(QColor(0, 0, 0, 80))
+                for seg in segments[:-1]:
+                    seg_w = (seg["size"] / item["size"]) * bar_w
+                    x_div += seg_w
+                    painter.drawLine(int(x_div), int(y), int(x_div), int(y + bar_h))
+            else:
+                # Нет подпапок — монотонный бар
+                painter.fillRect(int(margin_left), int(y), int(bar_w), int(bar_h), QColor(PALETTE[i % len(PALETTE)]))
+
+            # Название папки слева
+            painter.setPen(QColor("#e0e0e0"))
+            painter.setFont(label_font)
+            name_display = item["name"] if len(item["name"]) <= 26 else item["name"][:23] + "..."
+            painter.drawText(
+                QRect(0, int(y), margin_left - 10, int(bar_h)),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                name_display
+            )
+
+            # Размер и процент справа
+            pct = item["size"] / self.total_size * 100
+            label = f"{format_size(item['size'])}  {pct:.1f}%"
+            painter.setPen(QColor("#b0b0b0"))
+            painter.drawText(
+                QRect(int(margin_left + bar_area_w + 10), int(y), margin_right - 10, int(bar_h)),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                label
+            )
+
+        painter.end()
 
 
 # Поток сканирования с поддержкой реального прогресса
@@ -91,6 +237,9 @@ class DiskUsageApp(QMainWindow):
         self.ext_table.setSortingEnabled(True)
         self.tabs.addTab(self.ext_table, "Типы файлов (Расширения)")
 
+        self.bar_chart = BarChartWidget()
+        self.tabs.addTab(self.bar_chart, "Топ папок")
+
     def start_scan(self):
         folder = QFileDialog.getExistingDirectory(self, "Выберите папку для анализа")
         if folder:
@@ -127,19 +276,11 @@ class DiskUsageApp(QMainWindow):
             path = "..." + path[-57:]
         self.lbl_status.setText(f"Сканирую: {path}")
 
-    def format_size(self, size):
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size < 1024:
-                return f"{size:.2f} {unit}"
-            size /= 1024
-        return f"{size:.2f} TB"
-
     def display_data(self, data):
-        # Завершение работы прогресс-бара
         self.progress_bar.setMaximum(100)
         self.progress_bar.setValue(100)
         self.progress_bar.setFormat("100%")
-        self.lbl_status.setText(f"Сканирование завершено. Общий размер: {self.format_size(data['size'])}")
+        self.lbl_status.setText(f"Сканирование завершено. Общий размер: {format_size(data['size'])}")
         self.btn_scan.setEnabled(True)
 
         self.tree_view.setUpdatesEnabled(False)
@@ -151,6 +292,7 @@ class DiskUsageApp(QMainWindow):
         self.tree_view.setUpdatesEnabled(True)
 
         self.populate_extensions_tab(data)
+        self.bar_chart.set_data(data)
 
     def populate_tree_iterative(self, root_data):
         root_item = self.model.invisibleRootItem()
@@ -160,7 +302,7 @@ class DiskUsageApp(QMainWindow):
             parent_item, node_data = stack.pop()
 
             name_item = QStandardItem(node_data["name"])
-            size_item = NumericSortItem(self.format_size(node_data["size"]), node_data["size"])
+            size_item = NumericSortItem(format_size(node_data["size"]), node_data["size"])
 
             node_type = node_data.get("type", "directory")
 
@@ -212,7 +354,7 @@ class DiskUsageApp(QMainWindow):
                 def __lt__(self, other):
                     return self.data(Qt.ItemDataRole.UserRole) < other.data(Qt.ItemDataRole.UserRole)
 
-            item_size_custom = TableNumItem(self.format_size(total_size))
+            item_size_custom = TableNumItem(format_size(total_size))
             item_size_custom.setData(Qt.ItemDataRole.UserRole, total_size)
 
             self.ext_table.setItem(row, 0, item_ext)
@@ -225,6 +367,26 @@ class DiskUsageApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    dark_palette = app.palette()
+    dark_palette.setColor(QPalette.ColorRole.Window,          QColor(30, 30, 30))
+    dark_palette.setColor(QPalette.ColorRole.WindowText,      QColor(220, 220, 220))
+    dark_palette.setColor(QPalette.ColorRole.Base,            QColor(22, 22, 22))
+    dark_palette.setColor(QPalette.ColorRole.AlternateBase,   QColor(38, 38, 38))
+    dark_palette.setColor(QPalette.ColorRole.ToolTipBase,     QColor(220, 220, 220))
+    dark_palette.setColor(QPalette.ColorRole.ToolTipText,     QColor(220, 220, 220))
+    dark_palette.setColor(QPalette.ColorRole.Text,            QColor(220, 220, 220))
+    dark_palette.setColor(QPalette.ColorRole.Button,          QColor(45, 45, 45))
+    dark_palette.setColor(QPalette.ColorRole.ButtonText,      QColor(220, 220, 220))
+    dark_palette.setColor(QPalette.ColorRole.BrightText,      QColor(255, 255, 255))
+    dark_palette.setColor(QPalette.ColorRole.Link,            QColor(74, 144, 217))
+    dark_palette.setColor(QPalette.ColorRole.Highlight,       QColor(74, 144, 217))
+    dark_palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       QColor(100, 100, 100))
+    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(100, 100, 100))
+    app.setPalette(dark_palette)
+
     window = DiskUsageApp()
     window.show()
     sys.exit(app.exec())
