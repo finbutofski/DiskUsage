@@ -1,6 +1,7 @@
 ﻿import os
 import time
 from pathlib import Path
+from ads_support import *
 
 def count_items(root_path):
     """Быстрый подсчет общего количества файлов и папок для прогресс-бара"""
@@ -45,7 +46,7 @@ def get_tree(root_path, progress_callback=None):
             # Отправляем прогресс в UI
             if progress_callback:
                 current_time = time.time()
-                if current_time - last_ui_update > 0.05:  # Обновление каждые 50мс для плавности
+                if current_time - last_ui_update > 0.05:
                     progress_callback(current_dir, total_scanned)
                     last_ui_update = current_time
 
@@ -57,17 +58,23 @@ def get_tree(root_path, progress_callback=None):
                 f_size = stat.st_size
                 ext = os.path.splitext(f)[1].lower()
 
+                # --- ИНТЕГРАЦИЯ ADS ---
+                ads_size = get_ads_size(file_path)
+                full_size = f_size + ads_size
+                # ----------------------
+
                 current_node["children"][f] = {
                     "name": f,
                     "type": "file",
-                    "size": f_size,
+                    "size": full_size,  # Теперь здесь учитывается и ADS!
+                    "ads_size": ads_size,  # Сохраняем отдельно, если UI захочет подсветить такие файлы
                     "depth": current_depth + 1,
                     "mtime": stat.st_mtime,
                     "owner": "User" if is_nt else Path(file_path).owner(),
                     "ext": ext
                 }
 
-                dir_files_size += f_size
+                dir_files_size += full_size  # Суммируем честный размер для родительской папки
                 dir_files_count += 1
 
             except OSError:
