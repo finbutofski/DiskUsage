@@ -1,8 +1,12 @@
 ﻿import os
 import sys
+import subprocess
+import shutil
+import ctypes
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTreeView, QProgressBar, QPushButton,
-                             QFileDialog, QLabel, QHeaderView, QTabWidget, QTableWidget, QTableWidgetItem)
+                             QFileDialog, QLabel, QHeaderView, QTableWidget, QTableWidgetItem,
+                             QMenu, QSplitter)
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QPainter, QColor, QFont, QPalette
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QRect
 
@@ -215,11 +219,15 @@ class DiskUsageApp(QMainWindow):
         self.progress_bar.setValue(0)
         self.layout.addWidget(self.progress_bar)
 
-        # Вкладки
-        self.tabs = QTabWidget()
-        self.layout.addWidget(self.tabs)
+        # Горизонтальный сплиттер: слева — дерево каталогов, справа — типы файлов
+        self.hsplit = QSplitter(Qt.Orientation.Horizontal)
+        self.layout.addWidget(self.hsplit, stretch=1)
 
-        # Вкладка 1: Дерево каталогов
+        # Панель дерева каталогов
+        tree_panel = QWidget()
+        tree_layout = QVBoxLayout(tree_panel)
+        tree_layout.setContentsMargins(0, 0, 0, 0)
+        tree_layout.addWidget(QLabel("Структура каталогов"))
         self.tree_view = QTreeView()
         self.model = QStandardItemModel()
         self.model.setHorizontalHeaderLabels(["Имя", "Размер", "Тип", "Владелец", "Файлов"])
@@ -227,22 +235,45 @@ class DiskUsageApp(QMainWindow):
         self.tree_view.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.tree_view.setAlternatingRowColors(True)
         self.tree_view.setSortingEnabled(True)
-        self.tabs.addTab(self.tree_view, "Структура каталогов")
+        self.tree_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree_view.customContextMenuRequested.connect(self.show_context_menu)
+        tree_layout.addWidget(self.tree_view)
 
-        # Вкладка 2: Расширения
+        # Панель типов файлов
+        ext_panel = QWidget()
+        ext_layout = QVBoxLayout(ext_panel)
+        ext_layout.setContentsMargins(0, 0, 0, 0)
+        ext_layout.addWidget(QLabel("Типы файлов (Расширения)"))
         self.ext_table = QTableWidget()
         self.ext_table.setColumnCount(3)
         self.ext_table.setHorizontalHeaderLabels(["Расширение", "Количество файлов", "Общий размер"])
         self.ext_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.ext_table.setSortingEnabled(True)
-        self.tabs.addTab(self.ext_table, "Типы файлов (Расширения)")
+        ext_layout.addWidget(self.ext_table)
+
+        self.hsplit.addWidget(tree_panel)
+        self.hsplit.addWidget(ext_panel)
+        self.hsplit.setStretchFactor(0, 3)
+        self.hsplit.setStretchFactor(1, 1)
+
+        # Панель чарта с кнопкой сворачивания
+        chart_header = QHBoxLayout()
+        chart_header.setContentsMargins(0, 2, 0, 2)
+        chart_header.addWidget(QLabel("Топ папок"))
+        chart_header.addStretch()
+        self.btn_toggle_chart = QPushButton("▼")
+        self.btn_toggle_chart.setFixedSize(24, 24)
+        self.btn_toggle_chart.clicked.connect(self.toggle_chart)
+        chart_header.addWidget(self.btn_toggle_chart)
+        self.layout.addLayout(chart_header)
 
         self.bar_chart = BarChartWidget()
-        self.tabs.addTab(self.bar_chart, "Топ папок")
+        self.layout.addWidget(self.bar_chart)
 
     def start_scan(self):
         folder = QFileDialog.getExistingDirectory(self, "Выберите папку для анализа")
         if folder:
+            self.current_root = folder
             self.model.removeRows(0, self.model.rowCount())
             self.ext_table.setRowCount(0)
 
@@ -296,12 +327,13 @@ class DiskUsageApp(QMainWindow):
 
     def populate_tree_iterative(self, root_data):
         root_item = self.model.invisibleRootItem()
-        stack = [(root_item, root_data)]
+        stack = [(root_item, root_data, self.current_root)]
 
         while stack:
-            parent_item, node_data = stack.pop()
+            parent_item, node_data, full_path = stack.pop()
 
             name_item = QStandardItem(node_data["name"])
+            name_item.setData(full_path, Qt.ItemDataRole.UserRole + 1)
             size_item = NumericSortItem(format_size(node_data["size"]), node_data["size"])
 
             node_type = node_data.get("type", "directory")
@@ -332,7 +364,70 @@ class DiskUsageApp(QMainWindow):
 
             if "children" in node_data and node_data["children"]:
                 for child in node_data["children"].values():
-                    stack.append((name_item, child))
+                    child_path = os.path.join(full_path, child["name"])
+                    stack.append((name_item, child, child_path))
+
+    def toggle_chart(self):
+        visible = self.bar_chart.isVisible()
+        self.bar_chart.setVisible(not visible)
+        self.btn_toggle_chart.setText("▶" if visible else "▼")
+
+    def show_context_menu(self, pos):
+        index = self.tree_view.indexAt(pos)
+        if not index.isValid():
+            return
+
+        name_index = index.sibling(index.row(), 0)
+        item = self.model.itemFromIndex(name_index)
+        if not item:
+            return
+
+        path = item.data(Qt.ItemDataRole.UserRole + 1)
+        if not path:
+            return
+
+        menu = QMenu(self)
+        menu.addAction("Показать в проводнике", lambda: self.open_in_explorer(path))
+        menu.addSeparator()
+        menu.addAction("Удалить", lambda: self.delete_item(path))
+        menu.addSeparator()
+        menu.addAction("Копировать путь", lambda: self.copy_path(path))
+        menu.exec(self.tree_view.viewport().mapToGlobal(pos))
+
+    def open_in_explorer(self, path):
+        if os.name == 'nt':
+            subprocess.Popen(f'explorer /select,"{path}"', shell=True)
+        else:
+            subprocess.Popen(['xdg-open', os.path.dirname(path)])
+
+    def delete_item(self, path):
+        if os.name == 'nt':
+            class SHFILEOPSTRUCT(ctypes.Structure):
+                _fields_ = [
+                    ('hwnd',                 ctypes.c_void_p),
+                    ('wFunc',                ctypes.c_uint),
+                    ('pFrom',                ctypes.c_void_p),
+                    ('pTo',                  ctypes.c_void_p),
+                    ('fFlags',               ctypes.c_ushort),
+                    ('fAnyOperationsAborted',ctypes.c_int),
+                    ('hNameMappings',        ctypes.c_void_p),
+                    ('lpszProgressTitle',    ctypes.c_void_p),
+                ]
+            FO_DELETE   = 3
+            FOF_ALLOWUNDO = 0x0040
+            buf = ctypes.create_unicode_buffer(path + '\x00')
+            op = SHFILEOPSTRUCT()
+            op.hwnd  = int(self.winId())
+            op.wFunc = FO_DELETE
+            op.pFrom = ctypes.addressof(buf)
+            op.fFlags = FOF_ALLOWUNDO
+            ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+        else:
+            subprocess.Popen(['gio', 'trash', path])
+
+    def copy_path(self, path):
+        QApplication.clipboard().setText(path)
+
 
     def populate_extensions_tab(self, root_data):
         ext_data = get_files_sorted_by_extension(root_data)
