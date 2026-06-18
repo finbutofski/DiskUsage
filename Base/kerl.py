@@ -1,7 +1,12 @@
 ﻿import os
 import time
 from pathlib import Path
+import concurrent.futures          # Это у вас уже, скорее всего, есть
+import concurrent                  # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from ads_support import *
+
 
 def count_items(root_path):
     """Быстрый подсчет общего количества файлов и папок для прогресс-бара"""
@@ -9,6 +14,7 @@ def count_items(root_path):
     for _, dirs, files in os.walk(root_path):
         total += len(dirs) + len(files)
     return total
+
 
 def get_tree(root_path, progress_callback=None):
     root_path = os.path.abspath(root_path)
@@ -26,88 +32,134 @@ def get_tree(root_path, progress_callback=None):
     }
 
     nodes = {root_path: tree}
-    last_ui_update = 0
-    total_scanned = 0  # Текущее количество обработанных элементов
+    tree_lock = threading.Lock()
 
-    for current_dir, dirs, files in os.walk(root_path):
-        if current_dir not in nodes:
-            continue
+    ui_lock = threading.Lock()
+    last_ui_update = [0.0]
+    total_scanned = [0]
 
-        current_node = nodes[current_dir]
-        current_depth = current_node["depth"]
+    def scan_directory(current_dir):
+        """Функция для обработки ОДНОЙ директории. Будет выполняться в пуле потоков."""
+        try:
+            # os.scandir эффективнее, чем os.listdir, так как сразу возвращает объекты с метаданными
+            with os.scandir(current_dir) as entries:
+                entries_list = list(entries)
+        except OSError:
+            return []  # Нет доступа к папке
 
-        dir_files_size = 0
-        dir_files_count = 0
+        local_files = []
+        local_dirs = []
 
-        for f in files:
-            file_path = os.path.join(current_dir, f)
-            total_scanned += 1
-
-            # Отправляем прогресс в UI
-            if progress_callback:
-                current_time = time.time()
-                if current_time - last_ui_update > 0.05:
-                    progress_callback(current_dir, total_scanned)
-                    last_ui_update = current_time
-
+        # Сначала быстро разделяем объекты
+        for entry in entries_list:
             try:
-                if os.path.islink(file_path):
+                if entry.is_symlink():
                     continue
-
-                stat = os.stat(file_path)
-                f_size = stat.st_size
-                ext = os.path.splitext(f)[1].lower()
-
-                # --- ИНТЕГРАЦИЯ ADS ---
-                ads_size = get_ads_size(file_path)
-                full_size = f_size + ads_size
-                # ----------------------
-
-                current_node["children"][f] = {
-                    "name": f,
-                    "type": "file",
-                    "size": full_size,  # Теперь здесь учитывается и ADS!
-                    "ads_size": ads_size,  # Сохраняем отдельно, если UI захочет подсветить такие файлы
-                    "depth": current_depth + 1,
-                    "mtime": stat.st_mtime,
-                    "owner": "User" if is_nt else Path(file_path).owner(),
-                    "ext": ext
-                }
-
-                dir_files_size += full_size  # Суммируем честный размер для родительской папки
-                dir_files_count += 1
-
+                if entry.is_file():
+                    local_files.append(entry)
+                elif entry.is_dir():
+                    local_dirs.append(entry)
             except OSError:
                 continue
 
-        if dir_files_size > 0:
-            temp_path = current_dir
-            while temp_path in nodes:
-                nodes[temp_path]["size"] += dir_files_size
-                nodes[temp_path]["count"] += dir_files_count
-                if temp_path == root_path:
-                    break
-                temp_path = os.path.dirname(temp_path)
+        local_scanned_count = len(local_files) + len(local_dirs)
+        if progress_callback:
+            with ui_lock:
+                total_scanned[0] += local_scanned_count
+                current_time = time.time()
+                if current_time - last_ui_update[0] > 0.05:
+                    progress_callback(current_dir, total_scanned[0])
+                    last_ui_update[0] = current_time
 
-        for d in dirs:
-            dir_path = os.path.join(current_dir, d)
-            total_scanned += 1
+        # Получаем текущий узел из общего дерева
+        with tree_lock:
+            current_node = nodes.get(current_dir)
+        if not current_node:
+            return []
+
+        current_depth = current_node["depth"]
+        dir_files_size = 0
+        dir_files_count = 0
+
+        # 1. Обрабатываем файлы в текущей директории
+        for entry in local_files:
             try:
-                stat = os.stat(dir_path)
+                stat = entry.stat()
+                f_size = stat.st_size
+                ext = os.path.splitext(entry.name)[1].lower()
+
+                # Наша интеграция ADS (выполняется параллельно!)
+                ads_size = get_ads_size(entry.path)
+                full_size = f_size + ads_size
+
+                with tree_lock:
+                    current_node["children"][entry.name] = {
+                        "name": entry.name,
+                        "type": "file",
+                        "size": full_size,
+                        "ads_size": ads_size,
+                        "depth": current_depth + 1,
+                        "mtime": stat.st_mtime,
+                        "owner": "User" if is_nt else Path(entry.path).owner(),
+                        "ext": ext
+                    }
+                dir_files_size += full_size
+                dir_files_count += 1
+            except OSError:
+                continue
+
+        # 2. Создаем «заглушки» для поддиректорий и собираем пути для дальнейшего сканирования
+        next_dirs_to_scan = []
+        for entry in local_dirs:
+            try:
+                stat = entry.stat()
                 new_dir_node = {
-                    "name": d,
+                    "name": entry.name,
                     "type": "directory",
                     "size": 0,
                     "count": 0,
                     "depth": current_depth + 1,
                     "mtime": stat.st_mtime,
-                    "owner": "User" if is_nt else Path(dir_path).owner(),
+                    "owner": "User" if is_nt else Path(entry.path).owner(),
                     "children": {}
                 }
-                current_node["children"][d] = new_dir_node
-                nodes[dir_path] = new_dir_node
+                with tree_lock:
+                    current_node["children"][entry.name] = new_dir_node
+                    nodes[entry.path] = new_dir_node
+
+                next_dirs_to_scan.append(entry.path)
             except OSError:
                 continue
+
+        if dir_files_size > 0:
+            with tree_lock:
+                temp_path = current_dir
+                while temp_path in nodes:
+                    nodes[temp_path]["size"] += dir_files_size
+                    nodes[temp_path]["count"] += dir_files_count
+                    if temp_path == root_path:
+                        break
+                    temp_path = os.path.dirname(temp_path)
+
+        return next_dirs_to_scan
+
+    max_workers = (os.cpu_count() or 4) * 4
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Очередь задач на обработку директорий. Стартуем с корня.
+        futures = {executor.submit(scan_directory, root_path)}
+
+        while futures:
+            done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
+
+            for future in done:
+                futures.remove(future)
+                try:
+                    next_dirs = future.result()
+                    for d_path in next_dirs:
+                        futures.add(executor.submit(scan_directory, d_path))
+                except Exception as e:
+                    print(f"Ошибка при сканировании: {e}")
 
     return tree
 
@@ -121,6 +173,7 @@ def extract_files(all_files, current_node):
     elif current_node['type'] == 'directory':
         for child in current_node['children'].values():
             extract_files(all_files, child)
+
 
 def get_files_sorted_by_extension(node):
     all_files = []
