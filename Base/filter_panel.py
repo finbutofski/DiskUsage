@@ -1,26 +1,23 @@
 from PyQt6.QtWidgets import (QGroupBox, QFormLayout, QLineEdit,
-                             QSpinBox, QComboBox)
+                             QSpinBox, QComboBox, QPushButton, QHBoxLayout, QLabel)
 from PyQt6.QtCore import pyqtSignal
 
 
 class FilterPanelWidget(QGroupBox):
-    """
-    Виджет графической панели управления фильтрами.
-    При изменении любого поля излучает сигнал `filter_changed`.
-    """
     filter_changed = pyqtSignal()
 
     def __init__(self, parent=None):
-        super().__init__("Фильтрация файлов и папок", parent)
+        super().__init__("Фильтрация файлов", parent)
 
         layout = QFormLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setVerticalSpacing(6)
 
-        # 1. Поле ввода расширений
+        # 1. Расширения
         self.txt_ext = QLineEdit()
-        self.txt_ext.setPlaceholderText("например: png, jpg, pdf")
-        self.txt_ext.textChanged.connect(self.filter_changed.emit)
+        self.txt_ext.setPlaceholderText("csproj, png, txt")
 
-        # 2. Выпадающий список периода времени
+        # 2. Время изменения
         self.combo_time = QComboBox()
         self.combo_time.addItems([
             "За все время",
@@ -29,35 +26,57 @@ class FilterPanelWidget(QGroupBox):
             "За 30 дней",
             "За 365 дней"
         ])
-        self.combo_time.currentIndexChanged.connect(self.filter_changed.emit)
 
-        # 3. Диапазон размера (в МБ)
+        # 3. Мин / Макс размер в одну строку для экономии места
+        size_layout = QHBoxLayout()
         self.spin_min_mb = QSpinBox()
         self.spin_min_mb.setRange(0, 10_000_000)
         self.spin_min_mb.setSuffix(" МБ")
-        self.spin_min_mb.valueChanged.connect(self.filter_changed.emit)
 
         self.spin_max_mb = QSpinBox()
         self.spin_max_mb.setRange(0, 10_000_000)
         self.spin_max_mb.setValue(10_000_000)
         self.spin_max_mb.setSuffix(" МБ")
-        self.spin_max_mb.valueChanged.connect(self.filter_changed.emit)
 
-        # 4. Поле ввода владельца
+        size_layout.addWidget(self.spin_min_mb)
+        size_layout.addWidget(QLabel("—"))
+        size_layout.addWidget(self.spin_max_mb)
+
+        # 4. Владелец
         self.txt_owner = QLineEdit()
         self.txt_owner.setPlaceholderText("Имя пользователя")
-        self.txt_owner.textChanged.connect(self.filter_changed.emit)
 
-        # 5. Глубина вложенности
+        # 5. Глубина
         self.spin_depth = QSpinBox()
         self.spin_depth.setRange(0, 50)
         self.spin_depth.setSpecialValueText("Без ограничений")
-        self.spin_depth.valueChanged.connect(self.filter_changed.emit)
 
-        # Добавляем все элементы на форму
+        # 6. Кнопки
+        btn_layout = QHBoxLayout()
+        self.btn_apply = QPushButton("Применить")
+        self.btn_apply.setStyleSheet("font-weight: bold;")
+        self.btn_apply.clicked.connect(self.filter_changed.emit)
+
+        self.btn_reset = QPushButton("Сбросить")
+        self.btn_reset.clicked.connect(self.reset_filters)
+
+        btn_layout.addWidget(self.btn_apply)
+        btn_layout.addWidget(self.btn_reset)
+
+        # Добавляем все элементы
         layout.addRow("Расширения:", self.txt_ext)
-        layout.addRow("Время изменения:", self.combo_time)
-        layout.addRow("Мин. размер:", self.spin_min_mb)
-        layout.addRow("Макс. размер:", self.spin_max_mb)
+        layout.addRow("Время:", self.combo_time)
+        layout.addRow("Размер (от/до):", size_layout)
         layout.addRow("Владелец:", self.txt_owner)
-        layout.addRow("Глубина вложенности:", self.spin_depth)
+        layout.addRow("Глубина:", self.spin_depth)
+        layout.addRow(btn_layout)
+
+    def reset_filters(self):
+        """Сброс полей к исходным значениям."""
+        self.txt_ext.clear()
+        self.combo_time.setCurrentIndex(0)
+        self.spin_min_mb.setValue(0)
+        self.spin_max_mb.setValue(10_000_000)
+        self.txt_owner.clear()
+        self.spin_depth.setValue(0)
+        self.filter_changed.emit()

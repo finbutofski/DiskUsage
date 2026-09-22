@@ -199,13 +199,12 @@ class DiskUsageApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Disk Space Analyzer")
-        self.resize(1100, 750)
+        self.resize(1300, 800)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
 
-        # Панель управления
         self.top_panel = QHBoxLayout()
         self.btn_scan = QPushButton("Выбрать папку")
         self.btn_scan.setFixedWidth(150)
@@ -221,19 +220,15 @@ class DiskUsageApp(QMainWindow):
         self.progress_bar.setValue(0)
         self.layout.addWidget(self.progress_bar)
 
-        # Горизонтальный сплиттер: слева — дерево каталогов, справа — типы файлов
+        # Горизонтальный сплиттер: слева — дерево, справа — типы + фильтры
         self.hsplit = QSplitter(Qt.Orientation.Horizontal)
         self.layout.addWidget(self.hsplit, stretch=1)
 
-        # Панель дерева каталогов
+        # === ЛЕВАЯ ПАНЕЛЬ: Дерево каталогов (занимает теперь всё место по высоте!) ===
         tree_panel = QWidget()
         tree_layout = QVBoxLayout(tree_panel)
         tree_layout.setContentsMargins(0, 0, 0, 0)
         tree_layout.addWidget(QLabel("Структура каталогов"))
-
-        self.filter_panel = FilterPanelWidget()
-        self.filter_panel.filter_changed.connect(self.apply_filters)
-        tree_layout.addWidget(self.filter_panel)
 
         self.tree_view = QTreeView()
         self.model = QStandardItemModel()
@@ -241,7 +236,6 @@ class DiskUsageApp(QMainWindow):
 
         self.proxy_model = DiskFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.model)
-
         self.tree_view.setModel(self.proxy_model)
 
         self.tree_view.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -249,26 +243,35 @@ class DiskUsageApp(QMainWindow):
         self.tree_view.setSortingEnabled(True)
         self.tree_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_view.customContextMenuRequested.connect(self.show_context_menu)
+
         tree_layout.addWidget(self.tree_view)
 
-        # Панель типов файлов
         ext_panel = QWidget()
         ext_layout = QVBoxLayout(ext_panel)
         ext_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 1. Таблица типов файлов
         ext_layout.addWidget(QLabel("Типы файлов (Расширения)"))
         self.ext_table = QTableWidget()
         self.ext_table.setColumnCount(3)
         self.ext_table.setHorizontalHeaderLabels(["Расширение", "Количество файлов", "Общий размер"])
         self.ext_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.ext_table.setSortingEnabled(True)
-        ext_layout.addWidget(self.ext_table)
+        ext_layout.addWidget(self.ext_table, stretch=1)
 
+        # 2. Перенесенная панель фильтрации (внизу справа)
+        self.filter_panel = FilterPanelWidget()
+        self.filter_panel.filter_changed.connect(self.apply_filters)
+        ext_layout.addWidget(self.filter_panel)
+
+        # Добавляем панели в сплиттер
         self.hsplit.addWidget(tree_panel)
         self.hsplit.addWidget(ext_panel)
-        self.hsplit.setStretchFactor(0, 3)
-        self.hsplit.setStretchFactor(1, 1)
 
-        # Панель чарта с кнопкой сворачивания
+        self.hsplit.setStretchFactor(0, 7)
+        self.hsplit.setStretchFactor(1, 3)
+        self.hsplit.setSizes([900, 400])
+
         chart_header = QHBoxLayout()
         chart_header.setContentsMargins(0, 2, 0, 2)
         chart_header.addWidget(QLabel("Топ папок"))
@@ -280,6 +283,7 @@ class DiskUsageApp(QMainWindow):
         self.layout.addLayout(chart_header)
 
         self.bar_chart = BarChartWidget()
+        self.bar_chart.setMinimumHeight(200)
         self.layout.addWidget(self.bar_chart)
 
     def start_scan(self):
@@ -444,29 +448,25 @@ class DiskUsageApp(QMainWindow):
         QApplication.clipboard().setText(path)
 
     def apply_filters(self):
-        """Считывает настройки с FilterPanelWidget и передает их в DiskFilterProxyModel."""
-        # 1. Расширение
+        # Записываем значения с панели
         self.proxy_model.ext_filter = self.filter_panel.txt_ext.text()
 
-        # 2. Переводим МБ в Байты
         min_mb = self.filter_panel.spin_min_mb.value()
         max_mb = self.filter_panel.spin_max_mb.value()
         self.proxy_model.size_min = min_mb * 1024 * 1024
         self.proxy_model.size_max = max_mb * 1024 * 1024 if max_mb < 10_000_000 else float('inf')
 
-        # 3. Время
         time_idx = self.filter_panel.combo_time.currentIndex()
         days_map = {0: None, 1: 1, 2: 7, 3: 30, 4: 365}
         self.proxy_model.time_days = days_map.get(time_idx)
 
-        # 4. Владелец
         self.proxy_model.owner_filter = self.filter_panel.txt_owner.text()
 
-        # 5. Глубина
         depth = self.filter_panel.spin_depth.value()
         self.proxy_model.max_depth = depth if depth > 0 else None
 
         self.proxy_model.invalidateFilter()
+        self.tree_view.expandAll()
 
 
     def populate_extensions_tab(self, root_data):
