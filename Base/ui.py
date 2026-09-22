@@ -3,6 +3,8 @@ import sys
 import subprocess
 import shutil
 import ctypes
+from filter_model import DiskFilterProxyModel
+from filter_panel import FilterPanelWidget
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTreeView, QProgressBar, QPushButton,
                              QFileDialog, QLabel, QHeaderView, QTableWidget, QTableWidgetItem,
@@ -228,10 +230,20 @@ class DiskUsageApp(QMainWindow):
         tree_layout = QVBoxLayout(tree_panel)
         tree_layout.setContentsMargins(0, 0, 0, 0)
         tree_layout.addWidget(QLabel("Структура каталогов"))
+
+        self.filter_panel = FilterPanelWidget()
+        self.filter_panel.filter_changed.connect(self.apply_filters)
+        tree_layout.addWidget(self.filter_panel)
+
         self.tree_view = QTreeView()
         self.model = QStandardItemModel()
         self.model.setHorizontalHeaderLabels(["Имя", "Размер", "Тип", "Владелец", "Файлов"])
-        self.tree_view.setModel(self.model)
+
+        self.proxy_model = DiskFilterProxyModel(self)
+        self.proxy_model.setSourceModel(self.model)
+
+        self.tree_view.setModel(self.proxy_model)
+
         self.tree_view.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.tree_view.setAlternatingRowColors(True)
         self.tree_view.setSortingEnabled(True)
@@ -373,11 +385,14 @@ class DiskUsageApp(QMainWindow):
         self.btn_toggle_chart.setText("▶" if visible else "▼")
 
     def show_context_menu(self, pos):
-        index = self.tree_view.indexAt(pos)
-        if not index.isValid():
+        # 1. Получаем индекс в QTreeView (это индекс Proxy-модели)
+        proxy_index = self.tree_view.indexAt(pos)
+        if not proxy_index.isValid():
             return
 
-        name_index = index.sibling(index.row(), 0)
+        source_index = self.proxy_model.mapToSource(proxy_index)
+
+        name_index = source_index.sibling(source_index.row(), 0)
         item = self.model.itemFromIndex(name_index)
         if not item:
             return
@@ -427,6 +442,31 @@ class DiskUsageApp(QMainWindow):
 
     def copy_path(self, path):
         QApplication.clipboard().setText(path)
+
+    def apply_filters(self):
+        """Считывает настройки с FilterPanelWidget и передает их в DiskFilterProxyModel."""
+        # 1. Расширение
+        self.proxy_model.ext_filter = self.filter_panel.txt_ext.text()
+
+        # 2. Переводим МБ в Байты
+        min_mb = self.filter_panel.spin_min_mb.value()
+        max_mb = self.filter_panel.spin_max_mb.value()
+        self.proxy_model.size_min = min_mb * 1024 * 1024
+        self.proxy_model.size_max = max_mb * 1024 * 1024 if max_mb < 10_000_000 else float('inf')
+
+        # 3. Время
+        time_idx = self.filter_panel.combo_time.currentIndex()
+        days_map = {0: None, 1: 1, 2: 7, 3: 30, 4: 365}
+        self.proxy_model.time_days = days_map.get(time_idx)
+
+        # 4. Владелец
+        self.proxy_model.owner_filter = self.filter_panel.txt_owner.text()
+
+        # 5. Глубина
+        depth = self.filter_panel.spin_depth.value()
+        self.proxy_model.max_depth = depth if depth > 0 else None
+
+        self.proxy_model.invalidateFilter()
 
 
     def populate_extensions_tab(self, root_data):
