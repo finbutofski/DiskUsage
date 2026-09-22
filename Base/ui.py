@@ -10,8 +10,8 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QPainter, QColor, QFont, QPalette
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QRect
 
-# Импорт функций из kerl.py
-from kerl import get_tree, get_files_sorted_by_extension, count_items
+# Импорт функций из tree_builder.py
+from tree_builder import get_tree, get_files_sorted_by_extension, count_items
 
 
 PALETTE = ["#4A90D9", "#5BA85A", "#E87C35", "#C94F4F", "#8B6BB1",

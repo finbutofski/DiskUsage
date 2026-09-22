@@ -119,8 +119,6 @@ def get_tree(root_path, progress_callback=None):
     return tree
 
 
-# Функции extract_files и get_files_sorted_by_extension остаются без изменений...
-
 
 def extract_files(all_files, current_node):
     if current_node['type'] == 'file':
