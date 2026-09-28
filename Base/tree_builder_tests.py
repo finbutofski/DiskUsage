@@ -2,7 +2,7 @@ import os
 import shutil
 import subprocess
 import pytest
-from kerl import get_tree, count_items, get_files_sorted_by_extension
+from tree_builder import get_tree, count_items, get_files_sorted_by_extension
 
 
 def test_count_items(tmp_path):
