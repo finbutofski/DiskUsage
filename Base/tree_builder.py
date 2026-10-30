@@ -1,7 +1,7 @@
 ﻿import os
 import time
 from pathlib import Path
-from ads_support import *  # Подключаем ваш файл с ctypes-функцией
+from Base.ads_support import * # Подключаем ваш файл с ctypes-функцией
 
 
 def count_items(root_path):
